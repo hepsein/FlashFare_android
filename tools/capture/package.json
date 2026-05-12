@@ -1,0 +1,10 @@
+{
+  "name": "flashfare-capture-tool",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Collects FFC_DUMP tree dumps from adb logcat and deduplicates by node-tree signature.",
+  "bin": {
+    "ffc-capture": "./capture.mjs"
+  }
+}
