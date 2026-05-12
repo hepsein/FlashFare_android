@@ -4,7 +4,15 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, openSync, closeSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  openSync,
+  closeSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync
+} from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -102,9 +110,48 @@ function getSession(sessions, sessionId) {
   let s = sessions.get(sessionId);
   if (!s) {
     s = sessionState();
+    loadExistingUniques(sessionId, s);
     sessions.set(sessionId, s);
   }
   return s;
+}
+
+function loadExistingUniques(sessionId, session) {
+  const uniqueDir = join(CAPTURES_DIR, sessionId, 'unique');
+  if (!existsSync(uniqueDir)) return;
+  let entries;
+  try {
+    entries = readdirSync(uniqueDir);
+  } catch {
+    return;
+  }
+  let maxNo = 0;
+  let loaded = 0;
+  for (const name of entries) {
+    const m = /^(\d+)\.json$/.exec(name);
+    if (!m) continue;
+    const uniqueNo = Number(m[1]);
+    const file = join(uniqueDir, name);
+    let parsed;
+    try {
+      parsed = JSON.parse(readFileSync(file, 'utf8'));
+    } catch (e) {
+      process.stderr.write(`[!] ${sessionId} cannot reload ${name}: ${e.message}\n`);
+      continue;
+    }
+    const sig = nodeSignature(parsed);
+    if (!session.signatures.has(sig)) {
+      session.signatures.set(sig, { firstSeq: -1, count: 0, uniqueNo, savedAs: file });
+      loaded++;
+    }
+    if (uniqueNo > maxNo) maxNo = uniqueNo;
+  }
+  if (maxNo > 0) session.uniqueCount = maxNo;
+  if (loaded > 0) {
+    process.stdout.write(
+      `[capture] resumed session=${sessionId}: ${loaded} prior unique screens, next=${pad(maxNo + 1, 2)}\n`
+    );
+  }
 }
 
 function nodeSignature(parsed) {
