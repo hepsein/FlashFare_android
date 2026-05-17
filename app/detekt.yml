@@ -1,0 +1,35 @@
+build:
+  maxIssues: 0
+
+complexity:
+  LongParameterList:
+    active: true
+    functionThreshold: 8
+    constructorThreshold: 8
+  TooManyFunctions:
+    active: false
+
+style:
+  MagicNumber:
+    active: false
+  MaxLineLength:
+    active: true
+    maxLineLength: 140
+  ReturnCount:
+    active: true
+    max: 4
+  UnusedPrivateMember:
+    active: true
+  WildcardImport:
+    active: true
+
+naming:
+  FunctionNaming:
+    excludes: ['**/*.kt']
+    functionPattern: '[a-z][a-zA-Z0-9]*'
+  TopLevelPropertyNaming:
+    constantPattern: '[A-Z][_A-Z0-9]*'
+
+empty-blocks:
+  EmptyFunctionBlock:
+    active: false

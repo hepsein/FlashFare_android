@@ -17,12 +17,16 @@ import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
+import { parse as parseRide, signature as rideSignature } from '../parse/ride.mjs';
+import { appendRide, buildEntry, loadKnownSignatures } from '../parse/history.mjs';
+
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(SCRIPT_DIR, '..', '..');
 const CAPTURES_DIR = join(REPO_ROOT, 'captures');
 
 const CHUNK_RE = /^\[FFC session=(\S+) seq=(\d+) chunk=(\d+)\/(\d+)\](.*)$/;
 const END_RE = /^\[FFC session=(\S+) seq=(\d+) END\]$/;
+const PNG_RE = /^\[FFC session=(\S+) seq=(\d+) PNG (.+)\]$/;
 
 function printHelp() {
   process.stdout.write(
@@ -102,7 +106,9 @@ function sessionState() {
     buffers: new Map(),
     signatures: new Map(),
     rawCount: 0,
-    uniqueCount: 0
+    uniqueCount: 0,
+    rideCount: 0,
+    devicePngs: new Map()
   };
 }
 
@@ -168,7 +174,7 @@ function saveRaw(sessionId, seq, parsed) {
   return { file, pretty };
 }
 
-function saveUnique(sessionId, uniqueNo, pretty, takeScreencap) {
+function saveUnique(sessionId, seq, uniqueNo, pretty, takeScreencap, session) {
   const dir = join(CAPTURES_DIR, sessionId, 'unique');
   mkdirSync(dir, { recursive: true });
   const jsonFile = join(dir, `${pad(uniqueNo, 2)}.json`);
@@ -176,17 +182,33 @@ function saveUnique(sessionId, uniqueNo, pretty, takeScreencap) {
   let pngFile = null;
   if (takeScreencap) {
     pngFile = join(dir, `${pad(uniqueNo, 2)}.png`);
-    const fd = openSync(pngFile, 'w');
-    try {
-      const r = spawnSync('adb', ['exec-out', 'screencap', '-p'], {
-        stdio: ['ignore', fd, 'inherit']
-      });
-      if (r.status !== 0) {
-        process.stderr.write(`[!] screencap failed for ${jsonFile} (status=${r.status})\n`);
-        pngFile = null;
+    const devicePath = session.devicePngs.get(seq);
+    let pulled = false;
+    if (devicePath) {
+      const r = spawnSync('adb', ['pull', devicePath, pngFile], { encoding: 'utf8' });
+      if (r.status === 0) {
+        pulled = true;
+        spawnSync('adb', ['shell', 'rm', '-f', devicePath], { stdio: 'ignore' });
+        session.devicePngs.delete(seq);
+      } else {
+        process.stderr.write(
+          `[!] adb pull ${devicePath} failed (status=${r.status}): ${r.stderr || ''}\n`
+        );
       }
-    } finally {
-      closeSync(fd);
+    }
+    if (!pulled) {
+      const fd = openSync(pngFile, 'w');
+      try {
+        const r = spawnSync('adb', ['exec-out', 'screencap', '-p'], {
+          stdio: ['ignore', fd, 'inherit']
+        });
+        if (r.status !== 0) {
+          process.stderr.write(`[!] screencap failed for ${jsonFile} (status=${r.status})\n`);
+          pngFile = null;
+        }
+      } finally {
+        closeSync(fd);
+      }
     }
   }
   return { jsonFile, pngFile };
@@ -216,20 +238,54 @@ function handleCompleteDump(sessionId, seq, rawJson, sessions, opts) {
     process.stdout.write(
       `[=] ${sessionId} seq=${pad(seq, 4)} dup of unique=${pad(known.uniqueNo, 2)} (×${known.count})\n`
     );
+    discardDevicePng(session, seq);
     return;
   }
   session.uniqueCount++;
   const uniqueNo = session.uniqueCount;
-  const { jsonFile, pngFile } = saveUnique(sessionId, uniqueNo, pretty, opts.screencap);
+  const { jsonFile, pngFile } = saveUnique(sessionId, seq, uniqueNo, pretty, opts.screencap, session);
   session.signatures.set(sig, { firstSeq: seq, count: 1, uniqueNo, savedAs: jsonFile });
   const suffix = pngFile ? ' + .png' : '';
   process.stdout.write(
     `[★] ${sessionId} unique=${pad(uniqueNo, 2)} from seq=${pad(seq, 4)} → unique/${pad(uniqueNo, 2)}.json${suffix}\n`
   );
+  detectAndLogRide(parsed, jsonFile, session, sessionId, seq);
+}
+
+function detectAndLogRide(parsed, jsonFile, session, sessionId, seq) {
+  const ride = parseRide(parsed);
+  if (!ride) return;
+  const sig = rideSignature(ride);
+  if (knownRideSignatures.has(sig)) return;
+  knownRideSignatures.add(sig);
+  session.rideCount++;
+  const entry = buildEntry(parsed, ride, jsonFile);
+  appendRide(entry);
+  const drop = ride.dropoffAddress?.split(',')[1]?.trim() || ride.dropoffAddress || '?';
+  const tags = ride.tags.length > 0 ? ` [${ride.tags.length} tag${ride.tags.length > 1 ? 's' : ''}]` : '';
+  process.stdout.write(
+    `[ride] ${sessionId} seq=${pad(seq, 4)} ${ride.vehicleType || '?'} ${ride.price?.toFixed(2) || '?'}€ → ${drop} (${ride.tripDistanceKm}km)${tags}\n`
+  );
+}
+
+function discardDevicePng(session, seq) {
+  const devicePath = session.devicePngs.get(seq);
+  if (!devicePath) return;
+  spawnSync('adb', ['shell', 'rm', '-f', devicePath], { stdio: 'ignore' });
+  session.devicePngs.delete(seq);
 }
 
 function handleLine(line, sessions, opts) {
   if (!line) return;
+  const pngMatch = PNG_RE.exec(line);
+  if (pngMatch) {
+    const sessionId = pngMatch[1];
+    const seq = Number(pngMatch[2]);
+    const devicePath = pngMatch[3];
+    const session = getSession(sessions, sessionId);
+    session.devicePngs.set(seq, devicePath);
+    return;
+  }
   const endMatch = END_RE.exec(line);
   if (endMatch) {
     const sessionId = endMatch[1];
@@ -281,10 +337,12 @@ function handleLine(line, sessions, opts) {
 function printSummary(sessions) {
   let totalRaw = 0;
   let totalUnique = 0;
+  let totalRides = 0;
   const outputs = [];
   for (const [id, s] of sessions) {
     totalRaw += s.rawCount;
     totalUnique += s.uniqueCount;
+    totalRides += s.rideCount;
     outputs.push(join(CAPTURES_DIR, id));
   }
   const ratio = totalUnique > 0 ? (totalRaw / totalUnique).toFixed(1) : '0.0';
@@ -295,11 +353,14 @@ function printSummary(sessions) {
       `raw dumps: ${totalRaw}`,
       `unique screens: ${totalUnique}`,
       `total dedup ratio: ${ratio}x`,
+      `new ride requests: ${totalRides}`,
       `output: ${outputs.join(', ') || CAPTURES_DIR}`,
       ''
     ].join('\n')
   );
 }
+
+const knownRideSignatures = new Set();
 
 function main() {
   const opts = parseArgs(process.argv.slice(2));
@@ -309,9 +370,10 @@ function main() {
   }
   checkAdbDevice();
   if (!existsSync(CAPTURES_DIR)) mkdirSync(CAPTURES_DIR, { recursive: true });
+  for (const sig of loadKnownSignatures()) knownRideSignatures.add(sig);
   clearLogcat();
   process.stdout.write(
-    `[capture] listening on FFC_DUMP, screencap=${opts.screencap ? 'on' : 'off'}, output=${CAPTURES_DIR}\n`
+    `[capture] listening on FFC_DUMP, screencap=${opts.screencap ? 'on' : 'off'}, history=${knownRideSignatures.size} known rides, output=${CAPTURES_DIR}\n`
   );
 
   const sessions = new Map();

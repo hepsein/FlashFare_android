@@ -27,7 +27,7 @@ Voir `07_backend.md` pour le détail. Stack : Node 22 + `fastify` v5 + `postgres
 |---|---|
 | `FlashFareAccessibilityService` | Détecte écrans Uber Driver, déclenche serialize + POST `/ride/evaluate` |
 | `TreeSerializer` | `AccessibilityNodeInfo` → JSON plat `{meta, nodes[]}` |
-| `ScreenSignals` | Filtre local binaire (package + viewIds + regex texte) avant envoi |
+| `ScreenSignals` | Filtre local binaire (package + score multi-features text+structure) avant envoi |
 | `RideEvaluator` | POST `/ride/evaluate`, retourne `{ offer_id, is_offer, display }` |
 | `OverlayManager` | Rend le `display` reçu (score, verdict, couleur, taux) |
 | `RideStateMachine` | IDLE → OFFER_VISIBLE → TRIP_ACTIVE → TRIP_ENDED → IDLE |
@@ -84,7 +84,7 @@ Stockage : XML dump + JSON vérité (montant, pickup, etc.) pour tester le parse
 ## Flux d'une proposition
 
 1. AccessibilityService détecte event sur `com.ubercab.driver`
-2. `ScreenSignals.shouldEvaluate(tree)` — filtre local binaire (package + viewIds + regex texte). Si faux, on ignore. Si vrai :
+2. `ScreenSignals.shouldEvaluate(tree)` — filtre local binaire (package + score multi-features text+structure, seuil ≥ 3/4 : bouton bas large, prix €, pickup ETA, ≥ 2 occurrences km). Si faux, on ignore. Si vrai :
 3. `TreeSerializer` produit un JSON plat `{meta, nodes[]}` de l'arbre
 4. `RideEvaluator` POST `/ride/evaluate` avec le tree (timeout coroutine 2500 ms, gzip)
 5. Backend : applique `screen_detection`, match `ride_type`, extrait montant/pickup/destination, résout zone, `Promise.all([getEta, getFlightsCount])` timeout 1500 ms, calcule score, génère `offer_id`, INSERT `offer_event` OFFER_VISIBLE, retour `{ offer_id, is_offer, display }`

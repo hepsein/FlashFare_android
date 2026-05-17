@@ -34,6 +34,26 @@ CREATE INDEX idx_offer_events_type        ON offer_events(type);
 CREATE INDEX idx_offer_events_config_ver  ON offer_events(config_version);
 ```
 
+Colonne optionnelle ajoutée par la migration `011_offer_events_parser_backend_version.sql` : `parser_backend_version TEXT` (commit SHA du backend ayant produit la row, lu via `process.env.GIT_SHA`).
+
+Pour les rows `OFFER_VISIBLE` (insérées par `POST /ride/evaluate`), le `payload` JSONB embarque `driver_location` issu de `tree.meta.location` du dump :
+
+```json
+{
+  "ride_offer": { ... },
+  "eta": { ... },
+  "flights": { ... },
+  "score_predicted": { ... },
+  "driver_location": {
+    "lat": 48.8566, "lng": 2.3522, "accuracy_m": 12.5,
+    "provider": "fused", "captured_at": 1736245195000
+  },
+  "overlay_displayed_partial": false
+}
+```
+
+`driver_location` permet (a) la résolution de zone fallback côté backend si l'extraction du CP `dropoff_address` échoue, (b) la cohérence (driver loin du pickup déclaré = warning loggué), (c) la segmentation géo dans Amplitude (`driver_lat` / `driver_lng` event properties).
+
 ### Vue `rides` (1 ligne = 1 proposition)
 
 Reconstruite à partir des events bruts. **Agrégation synchrone** appelée à chaque event terminal (REFUSED, TIMEOUT, TRIP_ENDED, NEXT_OFFER) reçu dans `POST /events`. La ligne OFFER_VISIBLE de référence est insérée par `POST /ride/evaluate` (cf. `02_architecture.md` § Endpoints). Pas de queue, volume cible faible, la ligne `rides` est visible immédiatement par les outils admin. Réversible via `npm run rebuild-rides`.
@@ -117,8 +137,9 @@ Seules les courses complètes alimentent la calibration.
   },
   "parser": {
     "rules_version": "pr-2026-05-001",
-    "screen_detection": { /* package, must_have_any_view_id, must_have_text_matching */ },
-    "ride_types": [ /* extraction par viewId + regex, cf. android.md § 6 */ ],
+    "screen_detection": { /* package, score_threshold, features (text/class/bounds), cf. android.md § 5 */ },
+    "extraction": { /* price, pickup_eta, trip_distance_km, driver_rating, addresses, action_label, vehicle_type, tags */ },
+    "noise_labels_by_locale": { "fr": ["Montant net de frais"] },
     "trip_active_activity_classes": [ /* ... */ ],
     "trip_ended_activity_classes": [ /* ... */ ],
     "heartbeat_interval_minutes": 10,

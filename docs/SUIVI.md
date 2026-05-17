@@ -1,7 +1,34 @@
 # FlashFare — Suivi
 
 > Document vivant. Mis à jour à chaque fin de phase et à chaque décision structurante.
-> Dernière mise à jour : **2026-05-10** — passage à la phase Android : ajout `android.md` + `09_planning_android.md`, paradigme dumb-client propagé dans les MD, création `correction_android.md` (changements backend pour `/ride/evaluate`), insertion Phase 8 backend (Admin→9, Sec→10), formalisation des règles projet dans `00_contexte.md`.
+> Dernière mise à jour : **2026-05-17** — alignement spec backend pré-Phase 8 :
+> - `correction_android.md` : Request `/ride/evaluate` schema enrichi (`meta.schema_version`, `meta.location`), pipeline renuméroté (5 → 11), zone resolution avec fallback `meta.location`, payload `offer_events.OFFER_VISIBLE` embarque `driver_location`, Amplitude event `ride_offer_evaluated` enrichi (driver_lat / driver_lng / driver_location_age_ms).
+> - `08_planning_backend.md` Phase 8 : Zod précise `schema_version === 1` et `location` optionnel, extraction par regex+structure (pas viewIds), zone fallback `meta.location` shapefile IDF.
+> - `06_data.md` : colonne `parser_backend_version` ajoutée à `offer_events`, payload `OFFER_VISIBLE` documenté avec `driver_location`.
+> - Premier push du repo `flashfare-android` sur GitHub.
+>
+> 2026-05-16 — Phase 3 PROD `flashfare-android` setup (post-fork depuis `flashfare-capture`) :
+> - Package renommé `com.flashfare.capture` → `com.assistant.tools.helper` (anti-flag), `rootProject.name = flashfare-android`.
+> - Stack PROD ajoutée : Compose BOM 2025.01.01 + Material3, KSP, Retrofit + Moshi (KSP codegen) + OkHttp logging, Coroutines, Room + DataStore (Preferences + Proto), WorkManager, Timber, Amplitude Analytics + Experiment, JUnit Jupiter + Robolectric + MockK + Turbine, Detekt + ktlint. Versions épinglées dans `gradle/libs.versions.toml`.
+> - Restructure en sous-packages : `access/` (FlashFareAccessibilityService stub + TreeSerializer + LocationProvider), `foreground/` (FlashFareForegroundService type `specialUse` avec subtype `keep-process-alive-for-accessibility-service`), `ui/theme/` (AppTheme Material3). MainActivity passe en Compose (`setContent`), App.kt entry point.
+> - `LogChunker.kt` supprimé (plus de logcat dump — transport HTTP `/ride/evaluate` en Phase 4). `activity_main.xml` supprimé (Compose).
+> - Build flavors : `BACKEND_URL` buildConfigField (`http://10.0.2.2:3100` en debug, `https://api.flashfare.example` en release placeholder).
+> - Manifest PROD : permissions `INTERNET` + `ACCESS_NETWORK_STATE` + `FOREGROUND_SERVICE_SPECIAL_USE` + `POST_NOTIFICATIONS` + `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` + `REQUEST_INSTALL_PACKAGES` + (héritées) location/foreground.
+> - Theme passe en `android:Theme.Material.Light.NoActionBar` (compatible Compose, drop AppCompat).
+> - CI GitHub Actions : `.github/workflows/ci.yml` (JDK 21, ktlint + detekt + tests + assembleDebug + upload APK artifact). Config Detekt minimale dans `app/detekt.yml`.
+> - `AGENTS.md` réécrite pour contexte PROD (stack + red lines + arbo). `parser_rules_v1.json` à la racine hérité du repo capture (sera consommé en Phase 2 backend).
+> - **Compromis acté** : Hilt 2.55 incompatible AGP 9.x (`Android BaseExtension not found`). Repoussé Phase 4 le temps qu'une version Hilt compatible AGP 9 sorte (sinon fallback Anvil/Koin). Toutes les dépendances Hilt commentées, plugin retiré.
+> - **Workaround AGP 9 built-in Kotlin** : `android.disallowKotlinSourceSets=false` dans `gradle.properties` pour que KSP puisse ajouter ses sources générées via le DSL `kotlin.sourceSets`.
+> - Build `:app:assembleDebug` vert (5m16s première compilation, ~30s incrémental ensuite).
+>
+> 2026-05-16 — capture + spec parser :
+> - Constat acté : Uber Driver release build (R8/ProGuard) strippe `viewIdResourceName` et `contentDescription` → `vid` et `desc` `null` dans 100 % des nodes (vérifié sur 581 nodes / 8 fixtures). La stratégie de parsing bascule sur `class` + `text` + `bounds` uniquement (regex texte langue-indépendantes + filtres structurels). Propagation : `docs/android.md` § 5 + § 14, `docs/02_architecture.md`, `docs/06_data.md`, `docs/08_planning_backend.md`, `docs/09_planning_android.md` (Phase 1.D + Phase 2 + Phase 4), `docs/correction_android.md`, `docs/GUIDE.md`.
+> - Création `parser_rules_v1.json` à la racine : seed du payload `parser` de remote config, dérivé de `tools/parse/ride.mjs`, prêt à être consommé par la migration `009_parser_rules.sql` Phase 2 backend.
+> - `CaptureForegroundService.kt` (foreground service `dataSync` + notif persistante "Capture active") pour les longues sessions terrain (anti-kill Samsung/MIUI). Démarré par `MainActivity.onCreate`. Permissions `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_DATA_SYNC` + `POST_NOTIFICATIONS`.
+> - Health-check accessibility passif : `MainActivity.onResume` croise `Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES` avec `CaptureService.connected` et affiche 3 états (non activé / crashé / actif). Diagnostic seul, l'auto-toggle est interdit aux apps non-système.
+> - Constante `TreeSerializer.SCHEMA_VERSION = 1` ajoutée au schéma `meta`. Incrémentée à tout ajout/retrait/renommage dans `meta` ou `nodes[]` pour que le backend route vers le parser correspondant.
+>
+> 2026-05-15 — capture : ajout du champ `meta.location` au schéma TreeSerializer (lat/lng/accuracy_m/provider/captured_at) via `LocationProvider.kt` (`LocationManager.getLastKnownLocation()` passif, zéro tracking actif), permissions `ACCESS_FINE_LOCATION` + `ACCESS_COARSE_LOCATION` ajoutées au manifest et demandées au runtime depuis `MainActivity`. Schéma propagé dans `AGENTS.md`, `android.md` (Annexe A + § 6 Request `/ride/evaluate`) et `09_planning_android.md` (Phase 0 capture + Phase 3/4 prod).
 
 ---
 

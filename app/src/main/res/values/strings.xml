@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">FlashFare Capture</string>
-    <string name="service_description">Reads Uber Driver UI tree for offline fixture capture. Read-only, never sends inputs.</string>
+    <string name="app_name">Assistant Tools Helper</string>
+    <string name="service_description">Reads Uber Driver UI tree to evaluate ride offers. Read-only, never sends inputs.</string>
 </resources>

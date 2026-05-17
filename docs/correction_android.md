@@ -48,14 +48,34 @@ Content-Encoding: gzip   ← OkHttp envoie gzippé, Fastify décompresse
   "captured_at": "ISO-8601",
   "app_version": "0.1.0",
   "tree": {
-    "meta": { "event_type": "...", "window_class": "...", "window_title": "..." },
+    "meta": {
+      "schema_version": 1,
+      "session": "ab12cd34",
+      "seq": 42,
+      "ts": 1736245200000,
+      "event_type": "...",
+      "window_class": "...",
+      "location": {
+        "lat": 48.8566,
+        "lng": 2.3522,
+        "accuracy_m": 12.5,
+        "provider": "fused",
+        "captured_at": 1736245195000
+      }
+    },
     "nodes": [
-      { "id": 0, "parent": -1, "class": "FrameLayout", "vid": "...", "text": null, "desc": null, "bounds": [0,0,1080,2400] },
+      { "id": 0, "parent": -1, "class": "FrameLayout", "vid": null, "text": null, "desc": null, "bounds": [0,0,1080,2400] },
       ...
     ]
   }
 }
 ```
+
+> **`vid` et `desc` sont systématiquement null** : Uber Driver release est compilé avec R8/ProGuard qui strippe `viewIdResourceName` et `contentDescription`. Le parsing s'appuie exclusivement sur `class` + `text` + `bounds` (cf. `parser_rules_v1.json` à la racine, `android.md` § 5 + § 14).
+>
+> `meta.schema_version` (entier monotone) versionne le format. Le backend route vers le parser correspondant. Tout ajout/retrait/renommage de champ dans `meta` ou `nodes[]` incrémente la version côté `TreeSerializer.SCHEMA_VERSION` de l'app.
+>
+> `meta.location` est le dernier fix GPS connu côté device (passif, `LocationManager.getLastKnownLocation()`). Clé omise si permission absente. Le backend peut s'en servir pour la résolution de zone fallback (si pickup_address ambigu ou regex postal échoue), pour valider la cohérence (driver loin du pickup déclaré = warning à logger), et pour enrichir le tracking Amplitude. La fraîcheur du fix se mesure par `meta.ts - meta.location.captured_at`.
 
 ### Pipeline interne
 
@@ -65,32 +85,30 @@ Content-Encoding: gzip   ← OkHttp envoie gzippé, Fastify décompresse
      - via getConfigVariant(user_id) Amplitude si dispo
      - sinon fallback DB remote_configs.payload.parser
 3. Filtre `parser.screen_detection`
-     - package match ? must_have_any_view_id présent ? text regex ?
+     - package match ? score features (Button bas large, regex prix €, regex pickup ETA, ≥ 2 occurrences km) ≥ `score_threshold` ?
      - SI échec → return { is_offer: false } immédiat (court-circuit, pas d'ETA/flights)
-4. Itérer parser.ride_types, trouver le match (premier ride_type dont la
-   `detection` passe sur l'arbre)
-     - SI aucun match → log parse_failed_backend (level warn)
+4. Appliquer `parser.extraction` sur l'arbre (regex texte + filtres structurels class/bounds)
+     - `vehicle_type` dérivé runtime (1er TextView court non-structuré), `tags` dérivés runtime (TextViews non-structurés hors `noise_labels_by_locale`)
+     - SI un champ requis (`price`, `pickup_eta`, `dropoff_address`) manque → log parse_failed_backend (level warn)
        → return { is_offer: true, display: { show_overlay: false, error: "parsing_failed" } }
-5. Extraire les champs via les viewIds + regex du ride_type
-   (montant, pickup_min, pickup_km, course_km, destination)
-     - SI extraction échoue sur un champ requis → idem 4
-6. Résoudre la zone (mot-clé aéroport prioritaire, sinon lookup CP)
+5. Résoudre la zone (mot-clé aéroport prioritaire, sinon lookup CP de `dropoff_address`)
      - airport ∈ {CDG, ORY, BVA} → airport_for_flights
      - airport = LBG → fallback_score 85 inline
      - sinon zone_score lookup table postal_zones
-7. Promise.all([
+     - fallback : si l'extraction du CP échoue, utiliser `meta.location` (lat/lng) pour résoudre via le shapefile zones IDF (`04_zones.md`)
+6. Promise.all([
      getEta({ origin, destination }),
      airport_for_flights ? getFlightsCount(airport, eta_arrivee, windows_minutes[airport]) : null
    ]) avec timeout global 1500 ms
      - SI eta timeout → return { is_offer: true, display: { show_overlay: false, error: "eta_timeout", user_message: "Données indisponibles" } }
-8. Calculer score composite (formules `03_calcul.md`)
-9. Générer offer_id UUID (côté backend)
-10. INSERT offer_event de type OFFER_VISIBLE dans la même transaction
-    - payload = { ride_offer, eta, flights, score (predicted), overlay_displayed_partial: false }
+7. Calculer score composite (formules `03_calcul.md`)
+8. Générer offer_id UUID (côté backend)
+9. INSERT offer_event de type OFFER_VISIBLE dans la même transaction
+    - payload = { ride_offer, eta, flights, score (predicted), overlay_displayed_partial: false, driver_location: meta.location }
     - parser_version = `parser.rules_version` (du payload remote config)
     - parser_backend_version = commit SHA du backend (cf. § Versioning ci-dessous)
-11. trackEvent Amplitude `ride_offer_evaluated` (fire-and-forget)
-12. Return { offer_id, is_offer: true, display: { show_overlay, score, verdict, label, color, taux_horaire_text, taux_km_text } }
+10. trackEvent Amplitude `ride_offer_evaluated` (fire-and-forget), event properties incluent `driver_lat`, `driver_lng`, `driver_location_age_ms` pour segmentation géo
+11. Return { offer_id, is_offer: true, display: { show_overlay, score, verdict, label, color, taux_horaire_text, taux_km_text } }
 ```
 
 ### Réponses possibles (résumé)
@@ -141,10 +159,11 @@ SET payload = jsonb_set(
     "rules_version": "pr-2026-05-001",
     "screen_detection": {
       "package": "com.ubercab.driver",
-      "must_have_any_view_id": [],
-      "must_have_text_matching": ["\\d+[,.]\\d{2}\\s*€"]
+      "score_threshold": 99,
+      "features": []
     },
-    "ride_types": [],
+    "extraction": {},
+    "noise_labels_by_locale": { "fr": ["Montant net de frais"] },
     "trip_active_activity_classes": [],
     "trip_ended_activity_classes": [],
     "heartbeat_interval_minutes": 10,
@@ -156,16 +175,9 @@ SET payload = jsonb_set(
 WHERE config_version = 'cfg-2025-04-001';
 ```
 
-Le seed est **volontairement vide** sur `must_have_any_view_id` et `ride_types`
-au démarrage : les valeurs concrètes (viewIds, regex) ne seront connues qu'après
-la **campagne de capture Phase 1 Android**. Le backend renverra
-`{ is_offer: false }` sur 100 % des trees tant que ces tableaux sont vides — ce
-qui est le comportement souhaité (kill-switch implicite jusqu'au remplissage).
+Le seed pose `score_threshold = 99` (jamais atteignable, killswitch implicite) et `features = []`, `extraction = {}` (rien à appliquer). Le backend renvoie `{ is_offer: false }` sur 100 % des trees tant que la config n'est pas remplie.
 
-Une fois la campagne terminée, on remplit `parser_rules_v1.json` à la racine
-(cf. `09_planning_android.md` Phase 1.D) puis on bump la `rules_version` et on
-re-applique la même migration avec les nouvelles valeurs (ou directement via
-Amplitude en prod).
+Source de vérité du payload réel : `parser_rules_v1.json` à la racine du repo `flashfare-android` (généré à partir de `tools/parse/ride.mjs`, validé sur les fixtures Phase 1). Une fois la campagne terminée, on copie ce contenu dans la migration (ou directement via Amplitude variant en prod) en bumpant la `rules_version`.
 
 ---
 
@@ -385,9 +397,9 @@ mettre à jour le MD correspondant **dans le même PR** :
 
 | Fichier | Changement |
 |---|---|
-| `07_backend.md` | Ajouter `src/ride-evaluate.js`, `src/version.js` dans l'arbo + endpoints dans le tableau + bloc « `/ride/evaluate` » décrivant le pipeline |
-| `06_data.md` | Préciser que `OFFER_VISIBLE` est émis par `/ride/evaluate` côté backend, plus par l'app. Ajouter colonne `parser_backend_version` dans `offer_events`. |
-| `08_planning_backend.md` | Renumérotation Phases 8/9/10 + checklist tâches |
+| `07_backend.md` | Ajouter `src/ride-evaluate.js`, `src/version.js` dans l'arbo + endpoints dans le tableau + bloc « `/ride/evaluate` » décrivant le pipeline. Mentionner la consommation de `tree.meta.location` (fallback zone + tracking Amplitude). |
+| `06_data.md` | Préciser que `OFFER_VISIBLE` est émis par `/ride/evaluate` côté backend, plus par l'app. Ajouter colonne `parser_backend_version` dans `offer_events`. Mentionner `driver_location` (lat/lng/accuracy_m/provider/captured_at) embarqué dans le payload `offer_events.OFFER_VISIBLE`. |
+| `08_planning_backend.md` | Renumérotation Phases 8/9/10 + checklist tâches. La Phase 8 mentionne explicitement la validation Zod de `tree.meta.schema_version` (rejeter version inconnue), `tree.meta.location` (optionnel mais loggué). |
 | `SUIVI.md` | Nouvelle ligne dans la table d'avancement, décisions de phase |
 
 Pas de mise à jour ad-hoc de `01_produit.md`, `02_architecture.md`, `03_calcul.md`,

@@ -124,7 +124,7 @@ Chaque configuration porte une **version unique** (ex : `cfg-2025-04-001`) et re
 | `thresholds` | Seuils des verdicts (rentable ≥ 7, limite ≥ 4) |
 | `fallback_timeout_ms` | Combien de temps attendre Google Maps |
 | `flights` | Paramètres aéroports (CDG, ORY, BVA) : barèmes par nombre de vols, fenêtres temporelles |
-| `parser` | Règles d'extraction de l'arbre Uber (viewIds, regex), classes d'écrans trip_active / trip_ended, intervalles de heartbeat et d'overlay |
+| `parser` | Règles d'extraction de l'arbre Uber (regex texte + filtres structurels class/bounds — Uber strippe les viewIds en release), classes d'écrans trip_active / trip_ended, intervalles de heartbeat et d'overlay |
 
 > 🛬 **Aéroports MVP** : CDG, ORY et BVA, tous couverts par FlightView (gratuit, sans clé). Le Bourget (LBG) reste à part : peu de vols commerciaux + pas couvert par FlightView → fallback score 85 inline côté backend.
 

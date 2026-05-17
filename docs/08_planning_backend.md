@@ -177,18 +177,18 @@ Format : phase = section, tâche = checkbox courte. Avancer phase par phase. Ne 
 
 > Cf. `correction_android.md` pour la justification, le pipeline complet et le contrat d'API. Dépend de la Phase 1 capture Android (fixtures + `parser_rules_v1.json`) pour valider l'extraction sur cas réels.
 
-- [ ] `migrations/009_parser_rules.sql` — seed initial vide du champ `parser` dans `cfg-2025-04-001` (must_have_any_view_id et ride_types vides → killswitch implicite)
+- [ ] `migrations/009_parser_rules.sql` — seed initial du champ `parser` dans `cfg-2025-04-001`. Source de vérité : `parser_rules_v1.json` à la racine du repo capture (features score 3/4 + règles extraction text+structure). Seuil `score_threshold` mis à `99` au seed = killswitch implicite tant que pas activé via admin/Amplitude.
 - [ ] `migrations/010_app_versions.sql` — table `app_versions` (utilisée par la route `/version/latest` ci-dessous + Phase 9 admin)
 - [ ] `migrations/011_offer_events_parser_backend_version.sql` — colonne nullable `parser_backend_version` (commit SHA du backend)
 - [ ] Exporter `getEta(origin, destination)` depuis `src/eta.js` (factoriser le code de la route existante)
 - [ ] Vérifier que `getFlightsCount(airport, eta, windowMinutes)` est exportable proprement depuis `src/flights.js`
 - [ ] `src/ride-evaluate.js` :
   - [ ] Route `POST /ride/evaluate`, JWT, rate-limit 60/min/user (keyGenerator JWT-decode comme `/eta`)
-  - [ ] Zod : `tree.nodes[]` array, `tree.meta` object, `captured_at` ISO, `app_version`
+  - [ ] Zod : `tree.nodes[]` array, `tree.meta` object (dont `schema_version` accepté `=== 1` sinon 400, `location` optionnel `{lat, lng, accuracy_m, provider, captured_at}`), `captured_at` ISO, `app_version`
   - [ ] Charger le `parser` du user via `getConfigVariant` puis fallback DB
-  - [ ] Appliquer `parser.screen_detection` → si fail → return `{ is_offer: false }`
-  - [ ] Itérer `parser.ride_types`, extraire montant/pickup/destination
-  - [ ] Résoudre zone (mot-clé aéroport prioritaire, sinon lookup `postal_zones`)
+  - [ ] Appliquer `parser.screen_detection` → score features ≥ `score_threshold` ? Si fail → return `{ is_offer: false }`
+  - [ ] Appliquer `parser.extraction` (regex texte + filtres structurels class/bounds), `vehicle_type`/`tags` dérivés runtime
+  - [ ] Résoudre zone (mot-clé aéroport prioritaire, sinon lookup CP `dropoff_address` dans `postal_zones`, fallback `meta.location` lat/lng → shapefile zones IDF)
   - [ ] `Promise.all([getEta(...), getFlightsCount(...)])` avec timeout global 1500 ms
   - [ ] Calculer score composite (formules `03_calcul.md`)
   - [ ] Générer `offer_id` UUID, INSERT `offer_event` OFFER_VISIBLE

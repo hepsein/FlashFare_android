@@ -133,13 +133,19 @@ C'est la **seule logique applicative** côté app. Binaire, sans score de confia
 
 ### Critères (validés)
 
-| Critère | Source | Stabilité |
-|---|---|---|
-| `event.packageName == "com.ubercab.driver"` | Android natif | Stable |
-| Au moins un viewId du set "racine proposition" présent | À déterminer en capture (Phase 1) | Plus stable que des textes |
-| Texte qui match `\d+[,.]\d{2}\s*€` quelque part dans l'arbre | Toujours présent sur les propositions | Stable (format des montants) |
+Uber Driver est compilé en release avec R8/ProGuard : les `viewIdResourceName` et `contentDescription` sont strippés du runtime — `vid` et `desc` sont **null** dans 100 % des nodes. La détection s'appuie donc uniquement sur **`class` + `text` + `bounds`**, jamais sur `viewId`.
 
-**Pas** d'utilisation des mots `Accepter`/`Refuser` (Uber les change/localise/A/B test). Si les 3 critères passent, l'app envoie l'arbre au backend. Sinon elle ignore.
+Score multi-features (seuil ≥ 3/4) :
+
+| Feature | Type de règle | Stabilité |
+|---|---|---|
+| `event.packageName == "com.ubercab.driver"` | Filtre Android natif | Stable |
+| Bouton large (`android.widget.Button`, largeur ≥ 50 % écran) dans la moitié basse | Structurel (class + bounds) | Stable cross-langue |
+| Texte matchant `\d+[.,]\d{2}\s*€` | Pattern (format montant) | Stable cross-langue (zone €) |
+| Texte matchant `\d+\s*min\s*\(\s*\d+(?:[.,]\d+)?\s*km\s*\)` (pickup ETA) | Pattern (format Uber) | Stable cross-langue |
+| ≥ 2 occurrences de `\d+(?:[.,]\d+)?\s*km` (pickup + course) | Pattern (cumul) | Stable cross-langue |
+
+**Pas** de matching sur les mots `Accepter` / `Refuser` (Uber les localise / A/B test). Le label du bouton n'est utilisé que pour l'affichage debug, pas pour la détection.
 
 ### Config locale (remote config)
 
@@ -147,11 +153,12 @@ C'est la **seule logique applicative** côté app. Binaire, sans score de confia
 {
   "screen_signals": {
     "package": "com.ubercab.driver",
-    "must_have_any_view_id": [
-      "com.ubercab.driver:id/some_stable_id"
-    ],
-    "must_have_text_matching": [
-      "\\d+[,.]\\d{2}\\s*€"
+    "score_threshold": 3,
+    "features": [
+      { "name": "bottom_action_button", "node_filter": { "class": "android.widget.Button", "bounds_top_relative_min": 0.5, "width_relative_min": 0.5 } },
+      { "name": "price", "text_pattern": "\\d+[.,]\\d{2}\\s*€" },
+      { "name": "pickup_eta", "text_pattern": "\\d+\\s*min\\s*\\(\\s*\\d+(?:[.,]\\d+)?\\s*km\\s*\\)" },
+      { "name": "multiple_km", "text_pattern_count_min": { "pattern": "\\d+(?:[.,]\\d+)?\\s*km", "count": 2 } }
     ]
   },
   "trip_active_activity_classes": [
@@ -166,7 +173,7 @@ C'est la **seule logique applicative** côté app. Binaire, sans score de confia
 }
 ```
 
-Tout en remote config sauf valeurs par défaut embarquées. Permet d'ajuster `must_have_any_view_id` ou les class names sans release APK si Uber change quelque chose.
+Tout en remote config sauf valeurs par défaut embarquées. Permet d'ajuster patterns, seuil et classes d'activités sans release APK si Uber change quelque chose.
 
 > `backend_timeout_ms = 2500` : enveloppe côté client pour `/ride/evaluate`, qui inclut `getEta` + `getFlightsCount` côté backend dans le même cycle (budget interne backend : p95 < 1500 ms).
 
@@ -191,9 +198,17 @@ Authorization: Bearer <jwt>
   "app_version": "0.1.0",
   "tree": {
     "meta": {
+      "schema_version": 1,
       "event_type": "TYPE_WINDOW_CONTENT_CHANGED",
       "window_class": "com.ubercab.driver.SomeActivity",
-      "window_title": "..."
+      "window_title": "...",
+      "location": {
+        "lat": 48.8566,
+        "lng": 2.3522,
+        "accuracy_m": 12.5,
+        "provider": "fused",
+        "captured_at": 1736245195000
+      }
     },
     "nodes": [
       { "id": 0, "parent": -1, "class": "FrameLayout", "vid": "com.ubercab.driver:id/root", "text": null, "desc": null, "bounds": [0,0,1080,2400] },
@@ -465,16 +480,17 @@ Ajouter au seed `cfg-2025-04-001` un champ `parser` :
 ```json
 "parser": {
   "rules_version": "pr-2026-05-001",
-  "screen_detection": { "package": "...", "must_have_any_view_id": [...], "must_have_text_matching": [...] },
-  "ride_types": [
-    { "name": "UBERX_STANDARD", "detection": {...}, "extraction": {...} },
-    { "name": "UBER_COMFORT", ... },
-    { "name": "UBER_TRIP_RADAR", ... }
-  ]
+  "screen_detection": { "package": "...", "score_threshold": 3, "features": [...] },
+  "extraction": {
+    "price": {...}, "pickup_eta": {...}, "trip_distance_km": {...},
+    "driver_rating": {...}, "pickup_address": {...}, "dropoff_address": {...},
+    "action_label": {...}, "vehicle_type": {...}, "tags": {...}
+  },
+  "noise_labels_by_locale": { "fr": ["Montant net de frais"] }
 }
 ```
 
-Valeurs concrètes (viewIds, regex) inconnues aujourd'hui — extraites de la campagne Phase 1.
+`vehicle_type` (UberX / Comfort / Electric / UberX Priority …) est extrait au runtime depuis le tree, pas hardcodé en `ride_types`. Le seed concret vit dans `parser_rules_v1.json` à la racine du repo capture — généré à partir des regex validées par `tools/parse/ride.mjs` sur les fixtures de la campagne Phase 1.
 
 ### Fixtures backend
 
@@ -506,11 +522,13 @@ Projet Android séparé, jamais en prod, Phase 1 uniquement.
 ```
 flashfare-capture/
 ├── app/src/main/kotlin/com/flashfare/capture/
-│   ├── MainActivity.kt          toggle ON/OFF + status permissions
-│   ├── CaptureService.kt        AccessibilityService minimal
-│   ├── TreeSerializer.kt        AccessibilityNodeInfo → JSON compact (mutualisé avec prod plus tard)
-│   └── LogChunker.kt            split JSON > 3500 chars en chunks logcat
-└── app/src/main/AndroidManifest.xml
+│   ├── MainActivity.kt              toggle ON/OFF + health-check accessibility + status permissions + démarre le foreground service
+│   ├── CaptureService.kt            AccessibilityService minimal
+│   ├── CaptureForegroundService.kt  foreground service `dataSync` + notif persistante (anti-kill Samsung/MIUI)
+│   ├── TreeSerializer.kt            AccessibilityNodeInfo → JSON compact (mutualisé avec prod plus tard)
+│   ├── LogChunker.kt                split JSON > 3500 chars en chunks logcat
+│   └── LocationProvider.kt          `LocationManager.getLastKnownLocation()` snapshot pour `meta.location`
+└── app/src/main/AndroidManifest.xml   permissions ACCESS_FINE_LOCATION + ACCESS_COARSE_LOCATION + FOREGROUND_SERVICE + FOREGROUND_SERVICE_DATA_SYNC + POST_NOTIFICATIONS
 ```
 
 ### CaptureService.kt — squelette
@@ -546,7 +564,8 @@ class CaptureService : AccessibilityService() {
         "seq" to n,
         "ts" to System.currentTimeMillis(),
         "event_type" to AccessibilityEvent.eventTypeToString(event.eventType),
-        "window_class" to event.className?.toString()
+        "window_class" to event.className?.toString(),
+        "location" to LocationProvider.lastKnown(this)
       )
       LogChunker.emit(TAG, sessionId, n, meta, tree)
     }
@@ -558,11 +577,27 @@ class CaptureService : AccessibilityService() {
 }
 ```
 
+`TreeSerializer` expose `const val SCHEMA_VERSION = 1`. Tout ajout/retrait/renommage de champ dans `meta` ou `nodes[]` incrémente cette constante.
+
 Le `TreeSerializer` émet un JSON plat (pas nested) :
 
 ```json
 {
-  "meta": { "session": "ab12cd34", "seq": 42, "ts": 1736245200000, "event_type": "TYPE_WINDOW_CONTENT_CHANGED", "window_class": "com.ubercab.driver.SomeActivity" },
+  "meta": {
+    "schema_version": 1,
+    "session": "ab12cd34",
+    "seq": 42,
+    "ts": 1736245200000,
+    "event_type": "TYPE_WINDOW_CONTENT_CHANGED",
+    "window_class": "com.ubercab.driver.SomeActivity",
+    "location": {
+      "lat": 48.8566,
+      "lng": 2.3522,
+      "accuracy_m": 12.5,
+      "provider": "fused",
+      "captured_at": 1736245195000
+    }
+  },
   "nodes": [
     { "id": 0, "parent": -1, "class": "FrameLayout", "vid": "com.ubercab.driver:id/root", "text": null, "desc": null, "bounds": [0, 0, 1080, 2400] },
     { "id": 1, "parent": 0, "class": "TextView", "vid": "com.ubercab.driver:id/fare", "text": "18,50 €", "desc": null, "bounds": [40, 200, 500, 280] }
@@ -570,7 +605,9 @@ Le `TreeSerializer` émet un JSON plat (pas nested) :
 }
 ```
 
-Ce JSON est exactement le format attendu par `/ride/evaluate` plus tard — le TreeSerializer du capture sera réutilisé tel quel par l'app de prod.
+`meta.location` est issu de `LocationManager.getLastKnownLocation()` (le plus récent fix tous providers confondus, pas de tracking actif). Clé omise si la permission n'est pas accordée ou si aucun fix n'est disponible. La fraîcheur du fix se mesure par `meta.ts - meta.location.captured_at` (le backend peut écarter les fixes trop vieux pour la résolution de zone).
+
+Ce JSON est exactement le format attendu par `/ride/evaluate` plus tard — le TreeSerializer du capture est réutilisé tel quel par l'app de prod.
 
 ### Transport via Logcat chunké
 

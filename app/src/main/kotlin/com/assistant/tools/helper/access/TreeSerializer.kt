@@ -1,4 +1,4 @@
-package com.flashfare.capture
+package com.assistant.tools.helper.access
 
 import android.graphics.Rect
 import android.view.accessibility.AccessibilityNodeInfo
@@ -7,12 +7,15 @@ import org.json.JSONObject
 
 object TreeSerializer {
 
+    const val SCHEMA_VERSION = 1
+
     data class Meta(
         val session: String,
         val seq: Int,
         val ts: Long,
         val eventType: String,
-        val windowClass: String?
+        val windowClass: String?,
+        val location: LocationProvider.Snapshot?
     )
 
     fun serialize(meta: Meta, root: AccessibilityNodeInfo): String {
@@ -48,12 +51,24 @@ object TreeSerializer {
             }
         }
 
+        val locationJson = meta.location?.let { loc ->
+            JSONObject().apply {
+                put("lat", loc.lat)
+                put("lng", loc.lng)
+                put("accuracy_m", loc.accuracyM.toDouble())
+                put("provider", loc.provider)
+                put("captured_at", loc.capturedAt)
+            }
+        }
+
         val metaJson = JSONObject().apply {
+            put("schema_version", SCHEMA_VERSION)
             put("session", meta.session)
             put("seq", meta.seq)
             put("ts", meta.ts)
             put("event_type", meta.eventType)
             put("window_class", meta.windowClass)
+            put("location", locationJson)
         }
 
         return JSONObject().apply {

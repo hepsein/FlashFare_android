@@ -24,10 +24,15 @@ Format : phase = section, tâche = checkbox courte. Avancer phase par phase. Ne 
   - [ ] `eventTypes = TYPE_WINDOW_STATE_CHANGED | TYPE_WINDOW_CONTENT_CHANGED`
   - [ ] `flags = FLAG_INCLUDE_NOT_IMPORTANT_VIEWS | FLAG_RETRIEVE_INTERACTIVE_WINDOWS`
   - [ ] `notificationTimeout = 100`
-- [ ] `TreeSerializer.kt` : parcourt `rootInActiveWindow`, produit JSON plat `{meta, nodes[]}` (cf. `android.md` § Annexe A)
+- [ ] `TreeSerializer.kt` : parcourt `rootInActiveWindow`, produit JSON plat `{meta, nodes[]}` (cf. `android.md` § Annexe A) — `meta.location` inclus
 - [ ] `LogChunker.kt` : split JSON > 3500 chars en chunks `[FFC session=X seq=Y chunk=A/B]`, tag `FFC_DUMP`, level INFO
+- [ ] `LocationProvider.kt` : `LocationManager.getLastKnownLocation()` snapshot tous providers, retourne `null` si permission absente. Pas de tracking actif (zéro impact batterie).
+- [ ] `CaptureForegroundService.kt` : foreground service `dataSync` avec notif persistante "Capture active". Démarré par `MainActivity.onCreate`. Anti-kill Samsung/MIUI sur longues sessions terrain.
+- [ ] Health-check accessibility : `MainActivity.onResume` croise `Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES` avec `CaptureService.connected` pour distinguer non-activé / crashé / actif.
 - [ ] Debouncer 500ms côté `onAccessibilityEvent` pour éviter le spam quand Uber re-render rapidement
 - [ ] Permission `BIND_ACCESSIBILITY_SERVICE` déclarée dans le manifest du service
+- [ ] Permissions `ACCESS_FINE_LOCATION` + `ACCESS_COARSE_LOCATION` déclarées dans le manifest, demandées au runtime par `MainActivity`
+- [ ] Permissions `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_DATA_SYNC` + `POST_NOTIFICATIONS` (cette dernière demandée runtime API 33+ par `MainActivity`)
 - [ ] Test manuel sur device : install sur Pixel/Android, activer accessibility, ouvrir une app dont le package est différent → aucun dump (filtre packageNames OK)
 - [ ] Test manuel : ouvrir Uber Driver (sans être en ligne) → dumps apparaissent dans `adb logcat -s FFC_DUMP:I`
 
@@ -71,15 +76,16 @@ Format : phase = section, tâche = checkbox courte. Avancer phase par phase. Ne 
 
 ### 1.D — Identification des invariants
 
+> **Pré-requis acté** : Uber Driver est compilé en release avec R8/ProGuard. Les `viewIdResourceName` (`vid`) et `contentDescription` (`desc`) sont strippés — **null dans 100 % des nodes**. L'identification d'écran et l'extraction de champs s'appuient exclusivement sur **`class` + `text` + `bounds`**.
+
 À la main, avec les fixtures :
 
-- [ ] **Lister tous les viewIds présents dans les écrans `is_offer=true`**. Identifier ceux présents dans 100% des propositions → candidats `must_have_any_view_id` pour le filtre local app **et** la `screen_detection` backend.
-- [ ] **Lister les viewIds porteurs du montant** dans chaque ride type. Probable : 2-3 candidats par type.
-- [ ] **Lister les viewIds porteurs du pickup time**, du pickup km, du course km, de la destination.
-- [ ] **Décider des `ride_types`** : grouper les fixtures par signature structurelle. Probablement 2-3 groupes émergeront.
+- [ ] **Valider les features de `screen_detection`** sur l'ensemble des fixtures `is_offer=true` : présence d'un `android.widget.Button` large (≥ 50 % écran) dans la moitié basse, texte matchant `\d+[.,]\d{2}\s*€`, pickup ETA matchant `\d+\s*min\s*\(\s*\d+(?:[.,]\d+)?\s*km\s*\)`, ≥ 2 occurrences de `\d+(?:[.,]\d+)?\s*km`. Seuil cible : ≥ 3/4 features → détecté.
+- [ ] **Valider l'extraction par regex** sur les valeurs texte : prix `(\d+[.,]\d{2})\s*€` (préférer le standalone `^\d+[.,]\d{2}\s*€$`), pickup ETA `(\d+)\s*min\s*\(\s*(\d+(?:[.,]\d+)?)\s*km\s*\)`, distance course `^[^0-9]*?(\d+(?:[.,]\d+)?)\s*km[^0-9]*$` (hors pickup), note `^\d[.,]\d{2}$`, adresses `,\s*\d{4,5}\s+[A-Za-zÀ-ÿ]` (1ère = pickup, 2ème = dropoff).
+- [ ] **Stratégie `vehicle_type`** : 1er TextView court (< 40 chars) qui n'appartient à aucun pattern structuré. Vérifier que ça donne bien UberX / UberX Priority / Comfort / Electric (et plus) sur les fixtures.
+- [ ] **Stratégie `tags`** : tous les TextViews restants qui ne matchent aucun pattern structuré et ne sont pas dans `noise_labels_by_locale` (FR : `Montant net de frais`). Tester sur les fixtures avec "Exclusivité", "Course longue (+30 min)", bonus priority.
 - [ ] **Identifier les `window_class`** des écrans trip_active et trip_ended (mapping pour la state machine app).
-- [ ] **Tester les regex** sur les valeurs texte extraites : `(\d+[,.]\d{2})\s*€`, `(\d+)\s*min`, `(\d+[,.]\d+)\s*km`.
-- [ ] **Documenter dans `parser_rules_v1.json`** (premier draft du payload `parser` de remote config). Stocké à la racine + à utiliser en Phase 2 backend pour seed.
+- [ ] **Générer `parser_rules_v1.json`** à la racine : seed initial du payload `parser` de remote config, dérivé de `tools/parse/ride.mjs`. Stocké pour la Phase 2 backend (seed `cfg-2025-04-001`).
 
 **✅ Phase OK quand** : 30+ fixtures propositions + 5+ trip_active + 5+ trip_ended collectées et annotées, `parser_rules_v1.json` draft écrit et reviewed par toi.
 
@@ -97,7 +103,7 @@ Tâches backend résumées :
   - [ ] Zod : `tree.nodes[]`, `tree.meta`, `captured_at`, `app_version`
   - [ ] Charger `parser` depuis config du user
   - [ ] Filtre `screen_detection` → short-circuit si fail
-  - [ ] Itère `ride_types`, extrait champs via viewIds + regex
+  - [ ] Applique les règles `extraction` du parser (regex texte + filtres structurels class/bounds), `vehicle_type` dérivé au runtime
   - [ ] `Promise.all([getEta(), getFlightsCount()])` timeout 1500ms
   - [ ] Calcule score (réutilise les formules existantes)
   - [ ] INSERT `offer_event` OFFER_VISIBLE dans la même transaction
@@ -126,7 +132,7 @@ Tâches backend résumées :
 - [ ] Detekt + ktlint configurés en CI
 - [ ] Arbo packages : `access/`, `state/`, `overlay/`, `net/`, `auth/`, `update/`, `telemetry/`, `di/` (cf. `android.md` § 4)
 - [ ] `MainActivity` minimale Compose : écran "FlashFare — Service inactif" + bouton "Activer accessibilité" qui ouvre `Settings.ACTION_ACCESSIBILITY_SETTINGS`
-- [ ] Manifest : permissions `INTERNET`, `ACCESS_NETWORK_STATE`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`, `POST_NOTIFICATIONS`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, `REQUEST_INSTALL_PACKAGES`, `BIND_ACCESSIBILITY_SERVICE`
+- [ ] Manifest : permissions `INTERNET`, `ACCESS_NETWORK_STATE`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`, `POST_NOTIFICATIONS`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, `REQUEST_INSTALL_PACKAGES`, `BIND_ACCESSIBILITY_SERVICE`, `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`
 - [ ] Build flavors : `debug` (logs ON, backend `http://10.0.2.2:3100` pour émulateur ou `http://192.168.x.x:3100` pour device), `release` (logs OFF, backend prod)
 - [ ] `BuildConfig.VERSION_CODE` accessible partout
 - [ ] CI GitHub Actions : lint + tests + build APK debug sur PR
@@ -144,9 +150,10 @@ Tâches backend résumées :
   - [ ] Debouncer 500ms (réutilisé du capture)
   - [ ] Sur event Uber → appelle `ScreenSignals.shouldEvaluate(tree)` → si vrai → lance call backend
 - [ ] `access/TreeSerializer.kt` : reprend code du capture, légère adaptation (gestion erreurs propre, suppression Log.i de debug)
+- [ ] `access/LocationProvider.kt` : reprend code du capture (`LocationManager.getLastKnownLocation()` snapshot). Pour la prod, envisager FusedLocationProviderClient (Google Play Services) pour fixes plus précis et la latence sub-seconde.
 - [ ] `access/ScreenSignals.kt` :
   - [ ] Input : `List<FlatNode>` + `ScreenSignalsConfig` (issue de remote config)
-  - [ ] Logique binaire : tous les critères doivent passer (package, viewIds, regex texte)
+  - [ ] Calcule un score multi-features (présence Button bas large, regex prix €, regex pickup ETA, ≥ 2 occurrences km) ; seuil par défaut 3/4
   - [ ] Retour `Boolean`
   - [ ] Tests JUnit avec fixtures du capture (les fixtures `is_offer=true` doivent passer, `is_offer=false` doivent échouer)
 - [ ] `net/ApiClient.kt` : Retrofit + OkHttp + `CertificatePinner` (pins prod via BuildConfig, pas en dev) + `AuthInterceptor` + gzip activé

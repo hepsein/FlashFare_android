@@ -1,0 +1,120 @@
+{
+  "rules_version": "pr-2026-05-001",
+  "generated_from": "tools/parse/ride.mjs — validated 7/7 on captures/selected/ (1 dump cassé légitimement rejeté)",
+  "schema_assumption": {
+    "tree_schema_version": 1,
+    "vid_available": false,
+    "desc_available": false,
+    "rationale": "Uber Driver release build with R8/ProGuard strips viewIdResourceName and contentDescription. All identification relies on class + text + bounds."
+  },
+  "screen_detection": {
+    "package": "com.ubercab.driver",
+    "score_threshold": 3,
+    "features": [
+      {
+        "name": "bottom_action_button",
+        "description": "Wide Button in the bottom half of the screen (the accept / interested action).",
+        "node_filter": {
+          "class": "android.widget.Button",
+          "bounds_top_relative_min": 0.5,
+          "width_relative_min": 0.5
+        }
+      },
+      {
+        "name": "price",
+        "description": "Euro-formatted price anywhere in text.",
+        "text_pattern": "\\d+[.,]\\d{2}\\s*€"
+      },
+      {
+        "name": "pickup_eta",
+        "description": "Combined pickup ETA pattern: 'X min (Y km)'.",
+        "text_pattern": "\\d+\\s*min\\s*\\(\\s*\\d+(?:[.,]\\d+)?\\s*km\\s*\\)"
+      },
+      {
+        "name": "multiple_km",
+        "description": "At least 2 km mentions (pickup distance + trip distance).",
+        "text_pattern_count_min": {
+          "pattern": "\\d+(?:[.,]\\d+)?\\s*km",
+          "count": 2
+        }
+      }
+    ]
+  },
+  "extraction": {
+    "price": {
+      "type": "decimal",
+      "description": "Standalone price preferred; fallback = largest price-shaped match anywhere.",
+      "prefer_standalone_pattern": "^\\d+[.,]\\d{2}\\s*€$",
+      "fallback_largest_pattern": "(\\d+[.,]\\d{2})\\s*€",
+      "decimal_separators": [",", "."]
+    },
+    "pickup_eta": {
+      "type": "compound",
+      "pattern": "(\\d+)\\s*min\\s*\\(\\s*(\\d+(?:[.,]\\d+)?)\\s*km\\s*\\)",
+      "groups": {
+        "minutes": { "index": 1, "type": "integer" },
+        "distance_km": { "index": 2, "type": "decimal" }
+      }
+    },
+    "trip_distance_km": {
+      "type": "decimal",
+      "description": "Single km mention outside the pickup ETA pattern (e.g. 'Course de 6.8 km' / 'Trip 6.8 km').",
+      "pattern": "^[^0-9]*?(\\d+(?:[.,]\\d+)?)\\s*km[^0-9]*$",
+      "exclude_text_matching": "\\d+\\s*min\\s*\\(\\s*\\d+(?:[.,]\\d+)?\\s*km\\s*\\)"
+    },
+    "driver_rating": {
+      "type": "decimal",
+      "description": "Standalone short decimal (e.g. '4,78'). Excludes price-shaped texts.",
+      "pattern": "^\\d[.,]\\d{2}$",
+      "exclude_text_matching": "€"
+    },
+    "pickup_address": {
+      "type": "string",
+      "description": "First TextView whose text contains a postal-code + locality marker.",
+      "pattern": ",\\s*\\d{4,5}\\s+[A-Za-zÀ-ÿ]",
+      "match_index": 0
+    },
+    "dropoff_address": {
+      "type": "string",
+      "pattern": ",\\s*\\d{4,5}\\s+[A-Za-zÀ-ÿ]",
+      "match_index": 1
+    },
+    "action_label": {
+      "type": "node_text",
+      "description": "Text of the Button used by `bottom_action_button`. Used for display/debug only — not used in detection (Uber localizes/AB-tests the label).",
+      "node_filter": {
+        "class": "android.widget.Button",
+        "bounds_top_relative_min": 0.5,
+        "width_relative_min": 0.5
+      }
+    },
+    "vehicle_type": {
+      "type": "first_text_not_matching",
+      "description": "First short (<40 chars) TextView whose text does not match any structured pattern (price, pickup ETA, km, min, rating, postal address) and is not the action label.",
+      "max_length": 40,
+      "exclude_patterns": [
+        "\\d+[.,]\\d{2}\\s*€",
+        "\\d+\\s*min\\s*\\(\\s*\\d+(?:[.,]\\d+)?\\s*km\\s*\\)",
+        "\\d+(?:[.,]\\d+)?\\s*km",
+        "\\d+\\s*min",
+        "€",
+        "^\\d[.,]\\d{2}$",
+        ",\\s*\\d{4,5}\\s+[A-Za-zÀ-ÿ]"
+      ]
+    },
+    "tags": {
+      "type": "all_text_not_matching",
+      "description": "All remaining TextViews that are not structured fields, not the vehicle type, not the action label, and not in `noise_labels_by_locale`. Captures 'Exclusivité', 'Course longue (+30 min)', priority bonus messages, etc.",
+      "exclude_structured": true,
+      "exclude_noise_labels": true
+    }
+  },
+  "noise_labels_by_locale": {
+    "fr": ["Montant net de frais"]
+  },
+  "trip_active_activity_classes": [],
+  "trip_ended_activity_classes": [],
+  "heartbeat_interval_minutes": 10,
+  "overlay_dismiss_after_seconds": 10,
+  "backend_timeout_ms": 2500
+}

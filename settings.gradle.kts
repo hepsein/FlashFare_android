@@ -22,6 +22,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "FlashFare Capture"
+rootProject.name = "flashfare-android"
 include(":app")
  
