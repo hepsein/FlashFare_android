@@ -21,17 +21,23 @@ toute app via `Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES`).
 - Min SDK 29, Target SDK 36
 - **UI** : Compose + Material3 (pas de Views XML pour les écrans app, sauf
   overlay)
-- **DI** : Hilt + KSP
+- **DI** : **manual** (singletons `object Container` + constructor injection).
+  Hilt n'est PAS embarqué — l'app reste petite (~25 fichiers Kotlin), un DI
+  framework n'est pas justifié.
 - **Réseau** : Retrofit + Moshi + OkHttp (+ logging interceptor)
-- **Persistance** : Room + DataStore (Preferences + Proto)
+- **Persistance** : Room (queue events offline) + DataStore Preferences
+  (session state, tokens). **Pas** de DataStore Proto (codegen complexe pour
+  5-6 champs typés)
 - **Background** : WorkManager
 - **Coroutines** : kotlinx-coroutines-android (Flow / suspend)
 - **Télémétrie** : Amplitude (Analytics + Experiment) + Timber
-- **Tests** : JUnit 5 (Jupiter) + Robolectric + MockK + Turbine
+- **Tests** : JUnit 5 (Jupiter) — MockK et Robolectric ajoutés à l'usage
+  uniquement (quand un test concret le nécessite)
 - **Lint** : Detekt + ktlint (CI bloquant)
+- **Codegen** : KSP uniquement (Moshi, Room) — pas de kapt
 
-**Pas** de Crashlytics/Firebase, **pas** de RxJava, **pas** de Hilt-kapt
-(KSP uniquement), **pas** de `dotenv`-like côté Android.
+**Pas** de Crashlytics/Firebase, **pas** de RxJava, **pas** de Hilt, **pas** de
+DataStore Proto, **pas** de `dotenv`-like côté Android.
 
 ## Red lines (jamais)
 
@@ -55,48 +61,53 @@ toute app via `Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES`).
 - Un fichier = un sujet (anti-abstraction prématurée).
 - Conventional Commits en anglais (`feat:`, `chore:`, `fix:`).
 - Lint Detekt + ktlint vert avant commit (CI bloquant).
-- Sous-packages par responsabilité : `access/`, `state/`, `overlay/`,
-  `net/`, `auth/`, `update/`, `telemetry/`, `foreground/`, `ui/`, `di/`.
-- ViewModels Compose dans le package du feature concerné.
+- Sous-packages limités à 4 (un par domaine net du code) :
+  `access/`, `net/`, `overlay/`, `foreground/`. Le reste vit top-level pour
+  éviter les sous-packages à 1-2 fichiers.
 
 ## Arborescence (cf. docs/android.md § 4)
 
 ```
 app/src/main/
 ├── kotlin/com/assistant/tools/helper/
-│   ├── App.kt                            @HiltAndroidApp
+│   ├── App.kt                            Application + Timber init + Amplitude init
 │   ├── MainActivity.kt                   Compose entry point
+│   ├── RideStateMachine.kt               IDLE → OFFER_VISIBLE → TRIP_ACTIVE → TRIP_ENDED
+│   ├── SessionStore.kt                   DataStore Preferences (current_offer_id, last_transition_ts, …)
+│   ├── Telemetry.kt                      wrapper Amplitude (Analytics + Experiment + Heartbeat 10min)
+│   ├── Container.kt                      singleton DI manuel (instancie ApiClient, repos, etc.)
 │   ├── access/
 │   │   ├── FlashFareAccessibilityService.kt
 │   │   ├── TreeSerializer.kt             AccessibilityNodeInfo → JSON plat (mutualisé capture)
 │   │   ├── LocationProvider.kt           snapshot GPS pour meta.location
-│   │   └── ScreenSignals.kt              filtre local binaire (Phase 4)
-│   ├── state/
-│   │   ├── RideStateMachine.kt           IDLE → OFFER_VISIBLE → TRIP_ACTIVE → TRIP_ENDED
-│   │   └── SessionStore.kt               DataStore Proto
+│   │   └── ScreenSignals.kt              filtre local binaire score-based
+│   ├── net/
+│   │   ├── ApiClient.kt                  Retrofit + OkHttp + CertificatePinner + AuthInterceptor
+│   │   ├── RideEvaluator.kt              POST /ride/evaluate
+│   │   ├── ConfigRepository.kt           GET /config (ETag + cache 6h via DataStore Preferences)
+│   │   ├── EventReporter.kt              Room queue pending_events + WorkManager flush
+│   │   ├── AuthRepository.kt             login + refresh rotation + TokenStore
+│   │   └── UpdateChecker.kt              GET /version/latest + force-update logic
 │   ├── overlay/
 │   │   ├── OverlayManager.kt             WindowManager + TYPE_ACCESSIBILITY_OVERLAY
-│   │   └── OverlayRenderer.kt            pure function display → ViewState
-│   ├── net/
-│   │   ├── ApiClient.kt                  Retrofit + OkHttp + CertificatePinner
-│   │   ├── RideEvaluator.kt              POST /ride/evaluate
-│   │   ├── ConfigRepository.kt           GET /config (ETag + cache 6h)
-│   │   └── EventReporter.kt              Room queue + WorkManager flush
-│   ├── auth/
-│   │   ├── AuthRepository.kt             login + refresh rotation
-│   │   └── TokenStore.kt                 EncryptedSharedPreferences
-│   ├── update/
-│   │   ├── UpdateChecker.kt              GET /version/latest
-│   │   └── ForceUpdateGate.kt            bloque si VERSION_CODE < min_required
-│   ├── telemetry/
-│   │   ├── Telemetry.kt                  wrapper Amplitude
-│   │   └── Heartbeat.kt                  tick 10min
+│   │   ├── OverlayRenderer.kt            pure function display → ViewState
+│   │   └── ForceUpdateGate.kt            Compose plein écran bloquant si VERSION_CODE < min_required
 │   ├── foreground/
 │   │   └── FlashFareForegroundService.kt foreground specialUse + notif persistante
-│   ├── ui/theme/Theme.kt                 Material3 AppTheme
-│   └── di/AppModule.kt                   Hilt providers
+│   └── ui/theme/Theme.kt                 Material3 AppTheme
 └── AndroidManifest.xml
 ```
+
+`Container.kt` est un `object` singleton qui expose les instances partagées :
+```kotlin
+object Container {
+    val httpClient by lazy { OkHttpClient.Builder()... }
+    val retrofit by lazy { Retrofit.Builder()... }
+    val apiClient by lazy { ApiClient(retrofit) }
+    // ...
+}
+```
+Pas de framework DI. Pour mocker en test : `Container.apiClient = FakeApiClient()`.
 
 ## Permissions manifest
 

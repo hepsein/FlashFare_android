@@ -14,7 +14,7 @@ côté backend.
 ## Stack
 
 ### Client
-Kotlin 2 · AccessibilityService · Compose (UI app) · Views XML (overlay only, cold-start < 200 ms) · Hilt · Retrofit + OkHttp + CertificatePinner · Moshi · Room (queue events offline) · DataStore Proto (état session) · WorkManager · Amplitude Android SDK · Timber · JUnit 5 + Robolectric + MockK · Detekt + ktlint
+Kotlin 2 · AccessibilityService · Compose + Material3 (UI app) · Views XML (overlay only, cold-start < 200 ms) · **manual DI** (`object Container` singleton, pas de Hilt) · Retrofit + OkHttp + CertificatePinner · Moshi (KSP codegen) · Room (queue events offline) · DataStore Preferences (état session, tokens, ETag config — pas de Proto) · WorkManager · Amplitude Android SDK (Analytics + Experiment) · Timber · JUnit Jupiter (MockK + Robolectric ajoutés à l'usage) · Detekt + ktlint
 
 Cibles : Android 10+ (API 29), Xiaomi MIUI 13+, Samsung One UI 5+, Pixel.
 

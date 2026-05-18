@@ -71,15 +71,15 @@ Si plus tard l'app détecte un écran de course active ou course terminée (via 
 | Compose 1.7 | UI app (onboarding, login, status, force update) |
 | Views XML + ViewBinding | **Overlay uniquement** (Compose dans `WindowManager` overlay = trop lent au cold start, on veut < 200ms) |
 | Coroutines + Flow | Async, timeouts |
-| Hilt | DI |
+| Manual DI (`object Container`) | Pas de Hilt — app trop petite (~25 fichiers) pour justifier un framework DI |
 | Retrofit + OkHttp + CertificatePinner | HTTP backend |
-| Moshi | JSON |
+| Moshi + KSP codegen | JSON |
 | Room | Queue events offline-safe |
-| DataStore Proto | État de session persistant + config locale minimale |
+| DataStore Preferences | État de session persistant + tokens + ETag config (pas de Proto, codegen surdimensionné) |
 | WorkManager | Flush events + check auto-update |
-| Amplitude Android SDK | Télémétrie + heartbeat + alerting |
+| Amplitude Android SDK (Analytics + Experiment) | Télémétrie + heartbeat + remote config |
 | Timber | Logs (DEBUG only, strippé en release) |
-| JUnit 5 + Robolectric + MockK | Tests |
+| JUnit Jupiter | Tests (MockK + Robolectric ajoutés à l'usage si un test concret le nécessite) |
 | Detekt + ktlint | Lint en CI |
 
 **Pas de Crashlytics / Firebase** (risque théorique de fuite vers ML Google). Amplitude couvre le besoin.
@@ -92,38 +92,38 @@ Cibles : Android 10+ (API 29), Xiaomi MIUI 13+, Samsung One UI 5+, Pixel.
 ```
 flashfare-android/
 ├── app/src/main/kotlin/com/assistant/tools/helper/   # package neutre anti-flag
-│   ├── App.kt                          @HiltAndroidApp
-│   ├── MainActivity.kt                 onboarding + login + status service
+│   ├── App.kt                            Application + Timber init + Amplitude init
+│   ├── MainActivity.kt                   Compose : onboarding + login + status service
+│   ├── Container.kt                      singleton DI manuel (instancie ApiClient, repos, etc.)
+│   ├── RideStateMachine.kt               IDLE → OFFER_VISIBLE → TRIP_* → IDLE
+│   ├── SessionStore.kt                   DataStore Preferences (current_offer_id, last_transition_ts, ETag config, …)
+│   ├── Telemetry.kt                      wrapper Amplitude (Analytics + Experiment + Heartbeat 10min)
 │   ├── access/
 │   │   ├── FlashFareAccessibilityService.kt   détection + envoi tree au backend
-│   │   ├── TreeSerializer.kt           AccessibilityNodeInfo → JSON plat
-│   │   └── ScreenSignals.kt            détection binaire "potentiellement proposition"
-│   ├── state/
-│   │   ├── RideStateMachine.kt         IDLE → OFFER_VISIBLE → TRIP_* → IDLE
-│   │   └── SessionStore.kt             DataStore Proto, état persistant
-│   ├── overlay/
-│   │   ├── OverlayManager.kt           WindowManager add/update/remove
-│   │   ├── overlay_view.xml            layout Views + ViewBinding
-│   │   └── OverlayRenderer.kt          rend ce que le backend envoie
+│   │   ├── TreeSerializer.kt             AccessibilityNodeInfo → JSON plat (mutualisé capture)
+│   │   ├── LocationProvider.kt           snapshot GPS pour meta.location
+│   │   └── ScreenSignals.kt              filtre local score-based (Phase 4)
 │   ├── net/
-│   │   ├── ApiClient.kt                Retrofit + OkHttp + CertPinning + AuthInterceptor
-│   │   ├── ConfigRepository.kt         GET /config — règle détection écran + heartbeat interval
-│   │   ├── RideEvaluator.kt            POST /ride/evaluate
-│   │   └── EventReporter.kt            POST /events (queue Room + WorkManager)
-│   ├── auth/
-│   │   ├── AuthRepository.kt           login + refresh + tokens EncryptedSharedPreferences
-│   │   └── TokenStore.kt
-│   ├── update/
-│   │   ├── UpdateChecker.kt            GET /version/latest + DL APK + install
-│   │   └── ForceUpdateGate.kt          bloque l'app si version < min_required
-│   ├── telemetry/
-│   │   ├── Telemetry.kt                wrapper Amplitude
-│   │   └── Heartbeat.kt                tick 10min
-│   └── di/AppModule.kt
+│   │   ├── ApiClient.kt                  Retrofit + OkHttp + CertPinner + AuthInterceptor
+│   │   ├── ConfigRepository.kt           GET /config — ETag + cache via DataStore Preferences
+│   │   ├── RideEvaluator.kt              POST /ride/evaluate
+│   │   ├── EventReporter.kt              POST /events (queue Room + WorkManager flush)
+│   │   ├── AuthRepository.kt             login + refresh + tokens EncryptedSharedPreferences
+│   │   └── UpdateChecker.kt              GET /version/latest + DL APK + install logic
+│   ├── overlay/
+│   │   ├── OverlayManager.kt             WindowManager add/update/remove
+│   │   ├── overlay_view.xml              layout Views + ViewBinding (cold-start < 200 ms)
+│   │   ├── OverlayRenderer.kt            pure function display → ViewState
+│   │   └── ForceUpdateGate.kt            Compose plein écran bloquant si VERSION_CODE < min_required
+│   ├── foreground/
+│   │   └── FlashFareForegroundService.kt foreground specialUse + notif persistante
+│   └── ui/theme/Theme.kt                 Material3 AppTheme
 └── build.gradle.kts
 ```
 
-**~14 fichiers Kotlin** au total. Pas de `parser/`, pas de `calc/`, pas de provider par API tierce, pas de killswitch local : toute la logique métier vit côté backend dans `/ride/evaluate`. Le client se contente de faire de l'accessibility, de l'overlay, de la state machine, du transport HTTP et de la télémétrie.
+**~20 fichiers Kotlin** au total. Pas de `parser/`, pas de `calc/`, pas de provider par API tierce, pas de killswitch local : toute la logique métier vit côté backend dans `/ride/evaluate`. Le client se contente de faire de l'accessibility, de l'overlay, de la state machine, du transport HTTP et de la télémétrie.
+
+**4 sous-packages** uniquement (`access/`, `net/`, `overlay/`, `foreground/` + `ui/theme/` pour le thème Compose). Pas de `auth/`, `state/`, `update/`, `telemetry/`, `di/` séparés : les fichiers qui en relèveraient vivent top-level ou regroupés dans `net/`. Anti-abstraction prématurée — un sous-package à 1-2 fichiers est plus cher en navigation qu'il ne rapporte en clarté.
 
 **Package neutre** `com.assistant.tools.helper` (pas `com.flashfare.*`) : `Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES` est lisible par toute app, on évite d'être blacklisté par nom.
 

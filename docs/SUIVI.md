@@ -1,7 +1,14 @@
 # FlashFare — Suivi
 
 > Document vivant. Mis à jour à chaque fin de phase et à chaque décision structurante.
-> Dernière mise à jour : **2026-05-17** — alignement spec backend pré-Phase 8 :
+> Dernière mise à jour : **2026-05-18** — simplification stack et arbo Android (Drop partiel) :
+> - **Drops** : Hilt (manual DI via `object Container` singleton — app trop petite pour justifier un framework), DataStore Proto (Preferences suffit, zéro codegen), MockK / Robolectric / Turbine (ajoutés à l'usage si un test concret le requiert), hilt-navigation-compose, hilt-work.
+> - **Conservés** : Compose + Material3, Retrofit + Moshi (KSP), OkHttp logging, Coroutines, Room (KSP, pour la queue events offline), DataStore Preferences, WorkManager, Timber, Amplitude Analytics + Experiment, JUnit Jupiter.
+> - **Arbo** : 8 sous-packages → **4** (`access/`, `net/`, `overlay/`, `foreground/` + `ui/theme/`). `state/`, `auth/`, `update/`, `telemetry/`, `di/` supprimés. Les fichiers correspondants vivent top-level (App, MainActivity, Container, RideStateMachine, SessionStore, Telemetry) ou regroupés dans `net/` (AuthRepository, UpdateChecker). Cible : ~20 fichiers Kotlin, 5 packages.
+> - **Spec alignée** : règle 6 de `docs/00_contexte.md` (« stack figée ») mise à jour. `docs/02_architecture.md` § Stack, `docs/android.md` § 3 + § 4, `docs/09_planning_android.md` Phase 3, `AGENTS.md` alignés.
+> - Build `:app:assembleDebug` reste vert sans les deps droppées.
+>
+> 2026-05-17 — alignement spec backend pré-Phase 8 :
 > - `correction_android.md` : Request `/ride/evaluate` schema enrichi (`meta.schema_version`, `meta.location`), pipeline renuméroté (5 → 11), zone resolution avec fallback `meta.location`, payload `offer_events.OFFER_VISIBLE` embarque `driver_location`, Amplitude event `ride_offer_evaluated` enrichi (driver_lat / driver_lng / driver_location_age_ms).
 > - `08_planning_backend.md` Phase 8 : Zod précise `schema_version === 1` et `location` optionnel, extraction par regex+structure (pas viewIds), zone fallback `meta.location` shapefile IDF.
 > - `06_data.md` : colonne `parser_backend_version` ajoutée à `offer_events`, payload `OFFER_VISIBLE` documenté avec `driver_location`.

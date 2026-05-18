@@ -69,9 +69,6 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
-    // Hilt — Phase 4 (incompatibilité plugin avec AGP 9.x au moment du setup,
-    // à réactiver quand une version compatible est dispo ou via Anvil/Koin).
-
     // Network
     implementation(libs.retrofit)
     implementation(libs.retrofit.moshi)
@@ -84,13 +81,12 @@ dependencies {
     // Coroutines
     implementation(libs.kotlinx.coroutines.android)
 
-    // Room
+    // Room (queue events offline)
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
     ksp(libs.room.compiler)
 
-    // DataStore (Proto + Preferences, Proto codegen ajouté en Phase 4 quand on aura un .proto)
-    implementation(libs.datastore)
+    // DataStore Preferences (session state, tokens)
     implementation(libs.datastore.preferences)
 
     // WorkManager
@@ -105,10 +101,7 @@ dependencies {
     testImplementation(libs.junit.jupiter.api)
     testImplementation(libs.junit.jupiter.params)
     testRuntimeOnly(libs.junit.jupiter.engine)
-    testImplementation(libs.robolectric)
-    testImplementation(libs.mockk)
     testImplementation(libs.kotlinx.coroutines.test)
-    testImplementation(libs.turbine)
 }
 
 tasks.withType<Test>().configureEach {

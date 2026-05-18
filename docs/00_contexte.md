@@ -37,7 +37,7 @@ Règles transversales qui s'appliquent à toute contribution (code + documentati
 ### Architecture
 
 5. **App dumb, backend cerveau.** Toute la logique métier (parser, scoring, résolution de zone, orchestration des APIs tierces) vit côté backend. L'app fait 3 choses : détecter qu'un écran Uber a changé, envoyer l'arbre, afficher ce que le backend renvoie. Si tu hésites à mettre une règle côté app, c'est qu'elle doit être backend.
-6. **Stack figée.** Backend : Node 22 + Fastify v5 + postgres-js + Zod + lru-cache + node-cron + bcryptjs. **Pas** de TypeScript, Redis, BullMQ, ORM, `dotenv`. Android : Kotlin 2 + Compose + Hilt + Retrofit + Room + DataStore + Amplitude. **Pas** de Crashlytics/Firebase, RxJava. Toute dérogation = ticket explicite + validation.
+6. **Stack figée.** Backend : Node 22 + Fastify v5 + postgres-js + Zod + lru-cache + node-cron + bcryptjs. **Pas** de TypeScript, Redis, BullMQ, ORM, `dotenv`. Android : Kotlin 2 + Compose + Material3 + Retrofit + Moshi + OkHttp + Coroutines + Room + DataStore Preferences + WorkManager + Amplitude (Analytics + Experiment) + Timber + JUnit Jupiter. **Pas** de Hilt (manual DI via singletons / constructor injection — l'app reste petite), **pas** de DataStore Proto (Preferences suffit, zéro codegen), **pas** de MockK / Robolectric tant qu'un test concret ne les requiert pas, **pas** de Crashlytics/Firebase, **pas** de RxJava. Toute dérogation = ticket explicite + validation.
 7. **Pas d'abstraction prématurée.** Du code lisible, un fichier par sujet, pas de hiérarchie de modules/services/schemas. Trois lignes similaires valent mieux qu'une abstraction qu'on devra défaire.
 
 ### Sécurité / Red lines

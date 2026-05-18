@@ -128,9 +128,9 @@ Tâches backend résumées :
 
 - [ ] Créer projet Android Studio `flashfare-android`, package `com.assistant.tools.helper`
 - [ ] Min SDK 29, target SDK 34, JDK 21, Kotlin 2.0
-- [ ] Dépendances : Hilt, Compose BOM, Retrofit + Moshi + OkHttp logging, Coroutines, Room, DataStore Proto, WorkManager, Timber, Amplitude Android SDK, MockK, JUnit 5, Robolectric
+- [ ] Dépendances : Compose BOM + Material3, Retrofit + Moshi (KSP codegen) + OkHttp logging, Coroutines, Room (KSP codegen), DataStore Preferences, WorkManager, Timber, Amplitude Analytics + Experiment, JUnit Jupiter. **Pas** de Hilt (manual DI via `object Container`), **pas** de DataStore Proto, **pas** de MockK / Robolectric (ajoutés à l'usage)
 - [ ] Detekt + ktlint configurés en CI
-- [ ] Arbo packages : `access/`, `state/`, `overlay/`, `net/`, `auth/`, `update/`, `telemetry/`, `di/` (cf. `android.md` § 4)
+- [ ] Arbo packages : `access/`, `net/`, `overlay/`, `foreground/` + `ui/theme/`. Le reste vit top-level (App, MainActivity, Container, RideStateMachine, SessionStore, Telemetry). Cf. `android.md` § 4.
 - [ ] `MainActivity` minimale Compose : écran "FlashFare — Service inactif" + bouton "Activer accessibilité" qui ouvre `Settings.ACTION_ACCESSIBILITY_SETTINGS`
 - [ ] Manifest : permissions `INTERNET`, `ACCESS_NETWORK_STATE`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`, `POST_NOTIFICATIONS`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, `REQUEST_INSTALL_PACKAGES`, `BIND_ACCESSIBILITY_SERVICE`, `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`
 - [ ] Build flavors : `debug` (logs ON, backend `http://10.0.2.2:3100` pour émulateur ou `http://192.168.x.x:3100` pour device), `release` (logs OFF, backend prod)
